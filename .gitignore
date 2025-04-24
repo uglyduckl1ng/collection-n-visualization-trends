@@ -1,0 +1,25 @@
+# Виртуальное окружение
+venv/
+
+# Секреты (токены, ключи и т.д.)
+.env
+
+# Кэш Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Файлы данных (если нужно исключить)
+data/*.csv
+
+# Jupyter ноутбуки checkpoint-файлы
+.ipynb_checkpoints/
+
+# Логи
+*.log
+
+# macOS system files
+.DS_Store
+
+# VS Code настройки (опционально, если не хочешь шарить настройки)
+.vscode/
