@@ -267,5 +267,3 @@ def generate_radar_map():
     # Save SVG file
     dwg.save()
     print(f"SVG diagram saved as '{output_svg}' ({width}x{height}px)")
-
-generate_radar_map()
