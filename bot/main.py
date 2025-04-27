@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 import os
 
 from bot.trend_storage import save_trend
-from viz.wordcloud_input import generate_wordcloud
+from viz.radar_map import generate_radar_map
 
 # Загружаем токен из .env
 load_dotenv()
