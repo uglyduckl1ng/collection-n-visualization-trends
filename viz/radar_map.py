@@ -24,7 +24,7 @@ def generate_radar_map():
     oval_fill = 'white'     # oval background color
 
     # Input/output files
-    input_csv = 'data/examples.csv'
+    input_csv = 'data/trends.csv'
     output_svg = 'pics/trends_diagram.svg'
 
     # Time range mapping to ring indices

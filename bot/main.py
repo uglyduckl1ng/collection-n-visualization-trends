@@ -7,6 +7,8 @@ import csv
 from datetime import datetime
 
 from bot.trend_storage import save_trend_to_csv, get_user_trends, update_trend, delete_trend
+from viz.radar_map import generate_radar_map
+
 
 # =========================
 # Глобальная переменная для хранения состояний пользователей
@@ -78,8 +80,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if text.lower() == "сгенерировать радарную карту":
-            await update.message.reply_text("(Здесь будет генерация радарной карты)")
+            # Генерируем карту
+            generate_radar_map()
+
+            # Отправляем пользователю картинку
+            image_path = "pics/trends_diagram.svg"
+            if os.path.exists(image_path):
+                await update.message.reply_document(document=open(image_path, "rb"))
+            else:
+                await update.message.reply_text("Не удалось сгенерировать карту 😢")
             return
+
 
         if text.lower() == "мои тренды":
             user_trends = get_user_trends(user_id)
