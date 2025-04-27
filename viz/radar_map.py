@@ -24,15 +24,15 @@ def generate_radar_map():
     oval_fill = 'white'     # oval background color
 
     # Input/output files
-    input_csv = 'data/examples.csv'
+    input_csv = 'data/trends.csv'
     output_svg = 'pics/trends_diagram.svg'
 
     # Time range mapping to ring indices
     time_to_ring = {
         'Now': 0, 'Сейчас': 0,
         '1-5 years': 1, '1-5': 1, '1-5 лет': 1,
-        '5-15 years': 2, '5-15': 2, '5-15 лет': 2,
-        '>15 years': 3, 'more than 15': 3, 'более 15 лет': 3
+        '5-20 years': 2, '5-20': 2, '5-20 лет': 2,
+        '>15 years': 3, '20+ лет (Долгосрочное планирование)': 3, '20+ лет': 3
     }
 
     # === Read CSV data ===
@@ -42,9 +42,9 @@ def generate_radar_map():
     with open(input_csv, newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            trend_name = row.get('Trend', '').strip()
-            category_name = row.get('Category', '').strip()
-            time_range = row.get('Time', '').strip()
+            trend_name = row.get('trend', '').strip()
+            category_name = row.get('category', '').strip()
+            time_range = row.get('time_zone', '').strip()
             if not trend_name or not category_name:
                 continue  # skip empty entries
             # Track category order of first appearance
