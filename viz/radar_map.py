@@ -42,9 +42,9 @@ def generate_radar_map():
     with open(input_csv, newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            trend_name = row.get('Trend', '').strip()
-            category_name = row.get('Category', '').strip()
-            time_range = row.get('Time', '').strip()
+            trend_name = row.get('trend', '').strip()
+            category_name = row.get('category', '').strip()
+            time_range = row.get('time_zone', '').strip()
             if not trend_name or not category_name:
                 continue  # skip empty entries
             # Track category order of first appearance
