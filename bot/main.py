@@ -161,7 +161,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if text in TIME_ZONES:
-            user_states[user_id]["time_zone"] = TIME_ZONES[text]
+            user_states[user_id]["time_zone"] = TIME_ZONES[text].split(" (")[0]
             user_states[user_id]["step"] = "input_trend"
             keyboard = ReplyKeyboardMarkup([["Назад"]], resize_keyboard=True)
             await update.message.reply_text(
@@ -371,7 +371,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if text in TIME_ZONES:
-            user_states[user_id]["new_time_zone"] = TIME_ZONES[text]
+            user_states[user_id]["new_time_zone"] = TIME_ZONES[text].split(" (")[0]
             user_states[user_id]["step"] = "editing_trend_text"
             keyboard = ReplyKeyboardMarkup([["Оставить таким же"], ["Назад"]], resize_keyboard=True)
             await update.message.reply_text(
