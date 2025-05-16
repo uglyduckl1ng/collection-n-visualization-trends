@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Диаграмма трендов — zoom, pan, tooltip, popup</title>
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; width: 100%; }
+    body {
+      background: #fff; width: 100vw; height: 100vh; overflow: hidden;
+      box-sizing: border-box;
+      display: flex; flex-direction: column; align-items: stretch; }
+    #csvinput { position: fixed; top: 10px; left: 10px; z-index: 10; }
+    #filters {
+      position: fixed; top: 32px; left: 32px; z-index: 12;
+      background: rgba(255,255,255,0.98); border-radius: 10px;
+      padding: 14px 20px 14px 20px;
+      font-family: Arial, sans-serif; font-size: 18px;
+      box-shadow: 0 2px 18px 4px rgba(80,90,100,0.12);
+      user-select: none;
+      display: flex; gap: 30px; align-items: flex-start;
+      min-width: 330px;
+    }
+    .dropdown-wrap { position: relative; min-width: 168px; }
+    .dropdown-btn {
+      border-radius: 6px; border: 1px solid #bbb; background: #fff;
+      font-size: 17px; padding: 6px 14px 6px 10px;
+      text-align: left; min-width: 155px; width: 100%;
+      cursor: pointer; transition: border 0.15s;
+      display: flex; align-items: center; justify-content: space-between;
+      box-sizing: border-box;
+    }
+    .dropdown-btn.open { border-color: #2051c7; }
+    .dropdown-btn:after {
+      content: '▼'; font-size: 12px; margin-left: 10px; color: #888;
+      pointer-events: none;
+    }
+    .dropdown-menu {
+      display: none;
+      position: absolute; left: 0; top: 110%; min-width: 180px; max-width: 350px;
+      background: #fff; border: 1px solid #bbb; border-radius: 7px;
+      padding: 6px 0; box-shadow: 0 6px 20px 2px rgba(80,90,120,0.14);
+      z-index: 7; max-height: 240px; overflow-y: auto;
+    }
+    .dropdown-menu.open { display: block; }
+    .dropdown-menu label {
+      display: flex; align-items: center; gap: 9px; cursor: pointer;
+      padding: 4px 16px; font-size: 17px; line-height: 1.2;
+      transition: background 0.14s;
+      white-space: nowrap;
+    }
+    .dropdown-menu label:hover { background: #f0f6ff; }
+    .dropdown-menu input[type="checkbox"] {
+      transform: scale(1.13); margin-right: 3px;
+    }
+    .diagram-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 65vw;
+      height: 80vh;
+      margin: 10vh auto;
+      background: #fff;
+      border-radius: 30px;
+      box-shadow: 0 4px 32px 3px rgba(60,90,130,0.06);
+      position: absolute;
+      left: 50%;
+      top: 0;
+      transform: translateX(-50%);
+      overflow: hidden;
+    }
+    svg { width: 100%; height: 100%; display: block; background: #fff; }
+    .category-label {
+      font-family: Arial, sans-serif; font-size: 25px; font-weight: bold;
+      user-select: none; pointer-events: none; letter-spacing: 2px;
+    }
+    /* --- Tooltip for trend dot --- */
+    #trend-tooltip {
+      display: none;
+      position: fixed;
+      z-index: 99999;
+      pointer-events: none;
+      min-width: 40px;
+      max-width: 240px;
+      background: #fff;
+      color: #1a1a29;
+      border-radius: 10px;
+      padding: 8px 18px 9px 16px;
+      font-size: 15.2px;
+      font-weight: bold;
+      box-shadow: 0 4px 22px 1.5px rgba(70,70,120,0.15);
+      border: 1.5px solid #e1e2f0;
+      white-space: pre-line;
+      transition: opacity 0.14s;
+      font-family: Arial, sans-serif;
+    }
+    #trend-tooltip.right .arrow {
+      position: absolute;
+      left: -11px; top: 50%;
+      transform: translateY(-50%);
+      width: 13px; height: 14px;
+      pointer-events: none;
+    }
+    #trend-tooltip.left .arrow {
+      position: absolute;
+      right: -11px; top: 50%;
+      transform: translateY(-50%) scaleX(-1);
+      width: 13px; height: 14px;
+      pointer-events: none;
+    }
+    #trend-tooltip .arrow svg {
+      display: block;
+      width: 100%; height: 100%;
+    }
+    /* --- Модальное окно --- */
+    #trend-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      width: 100vw; height: 100vh;
+      z-index: 100000;
+      background: rgba(30,40,80,0.31);
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.14s;
+    }
+    #trend-modal.show { display: flex; }
+    .modal-card {
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 8px 64px 8px rgba(40,60,90,0.18);
+      min-width: 320px; max-width: 480px;
+      width: 95vw; max-height: 80vh;
+      padding: 40px 38px 32px 38px;
+      position: relative;
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      animation: modal-appear 0.19s cubic-bezier(.61,1.34,.32,1) both;
+    }
+    @keyframes modal-appear {
+      from { transform: scale(0.88) translateY(25px); opacity:0.2;}
+      to { transform: scale(1) translateY(0); opacity:1;}
+    }
+    .modal-close {
+      position: absolute;
+      top: 16px; right: 18px;
+      font-size: 28px;
+      color: #858585;
+      cursor: pointer;
+      background: none;
+      border: none;
+      font-weight: bold;
+      transition: color 0.15s;
+      line-height: 1;
+      z-index: 2;
+    }
+    .modal-close:hover { color: #e53935; }
+    .modal-title {
+      font-size: 27px;
+      font-weight: bold;
+      margin-bottom: 19px;
+      color: #182048;
+      word-break: break-word;
+    }
+    .modal-tags {
+      display: flex; gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .tag {
+      display: inline-block;
+      font-size: 16px;
+      font-weight: 600;
+      border-radius: 13px;
+      padding: 3px 14px 4px 14px;
+      background: #f3f4f8;
+      color: #222;
+      margin-right: 0;
+      margin-bottom: 2px;
+      box-shadow: 0 2px 6px 0 rgba(20,32,70,0.04);
+      border: none;
+    }
+    .tag-category { color: #fff !important; }
+    .tag-interval { color: #234; background: #e9ecf5; }
+    .modal-desc {
+      font-size: 17px;
+      color: #434343;
+      margin-bottom: 14px;
+      white-space: pre-line;
+    }
+    .modal-related {
+      margin-top: 9px;
+      font-size: 15px;
+      color: #707181;
+    }
+    @media (max-width: 700px) {
+      .modal-card { padding: 20px 7vw 15px 7vw; min-width: 0; max-width: 99vw; }
+      .modal-title { font-size: 20px; }
+      .modal-tags .tag { font-size: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <input id="csvinput" type="file" accept=".csv">
+  <div id="filters"></div>
+  <div class="diagram-wrap">
+    <svg id="chart"></svg>
+  </div>
+  <!-- Модальное окно -->
+  <div id="trend-modal">
+    <div class="modal-card" id="trend-modal-card" tabindex="0">
+      <button class="modal-close" id="modal-close-btn" title="Закрыть">&times;</button>
+      <div class="modal-title"></div>
+      <div class="modal-tags"></div>
+      <div class="modal-desc"></div>
+      <div class="modal-related"></div>
+    </div>
+  </div>
+  <!-- Tooltip для точек -->
+  <div id="trend-tooltip"></div>
+  <script>
+    // --- Категории и цвета ---
+    const categoriesList = [
+      "Политические","Экономические","Экологические","Технические","Юридические","Социальные","Другое"
+    ];
+    const categoryColors = [
+      "#2051c7","#ff9800","#43a047","#7e57c2","#e53935","#00838f","#757575"
+    ];
+    const intervalList = ["1-3", "3-5", "7-10", "10+"];
+    const intervalColors = [
+      "#4055a8", "#6784c9", "#a5b4e2", "#d6e2f9"
+    ];
+    const blues = ['#e4eafd', '#b9c7ea', '#a6b7e3', '#8fa2d6'];
+    const flipped = [2,3,4];
+    const categories = 7, intervals = 4;
+
+    const ringWidthRatio = [5.3,2.7,2.7,2.7];
+
+    // ---- ZOOM / PAN state ----
+    let zoom = 1;
+    let panX = 0;
+    let panY = 0;
+    let isPanning = false;
+    let startPan = {x: 0, y: 0};
+    let startPanOffset = {x: 0, y: 0};
+
+    function getWrapSize() {
+      const wrap = document.querySelector('.diagram-wrap');
+      const bounds = wrap.getBoundingClientRect();
+      return [bounds.width, bounds.height];
+    }
+    function minSide() {
+      const [w, h] = getWrapSize();
+      return Math.min(w, h);
+    }
+    function getRadii() {
+      const base = minSide();
+      const fullWidth = base*0.92;
+      const totalCoef = ringWidthRatio.reduce((a,b)=>a+b,0);
+      const singleWidth = fullWidth/totalCoef;
+      let radii = [0];
+      for(let k of ringWidthRatio)
+        radii.push(radii[radii.length-1] + singleWidth*k/2);
+      return radii;
+    }
+
+    const svg = document.getElementById('chart');
+    const defs = document.createElementNS("http://www.w3.org/2000/svg","defs");
+    svg.appendChild(defs);
+
+    function describeArcPath(cx, cy, r, startAngle, endAngle, flip=false) {
+      const rad = a => (a - 90) * Math.PI / 180;
+      let x1, y1, x2, y2, largeArc, sweep;
+      if (!flip) {
+        x1 = cx + r * Math.cos(rad(startAngle));
+        y1 = cy + r * Math.sin(rad(startAngle));
+        x2 = cx + r * Math.cos(rad(endAngle));
+        y2 = cy + r * Math.sin(rad(endAngle));
+        largeArc = (endAngle - startAngle) > 180 ? 1 : 0;
+        sweep = 1;
+      } else {
+        x1 = cx + r * Math.cos(rad(endAngle));
+        y1 = cy + r * Math.sin(rad(endAngle));
+        x2 = cx + r * Math.cos(rad(startAngle));
+        y2 = cy + r * Math.sin(rad(startAngle));
+        largeArc = (startAngle - endAngle) > 180 ? 1 : 0;
+        sweep = 0;
+      }
+      return [
+        "M", x1, y1,
+        "A", r, r, 0, largeArc, sweep, x2, y2
+      ].join(" ");
+    }
+
+    function sectorSpread(trends, base, centerX, centerY, radii, activeCategories, activeIntervals) {
+      const placed = [];
+      for (let cat = 0; cat < categories; cat++) {
+        if (!activeCategories.includes(categoriesList[cat])) continue;
+        for (let intv = 0; intv < intervals; intv++) {
+          if (!activeIntervals.includes(intervalList[intv])) continue;
+          const sectorTrends = trends.filter(t =>
+            t.Категория === categoriesList[cat] && t.Интервал === intervalList[intv]
+          );
+          const startA = cat * 2 * Math.PI / categories - Math.PI/2;
+          const endA = (cat + 1) * 2 * Math.PI / categories - Math.PI/2;
+          const r1 = radii[intv];
+          const r2 = radii[intv+1];
+          const dotBaseR = base*0.0095;
+          const N = sectorTrends.length;
+          if (N === 0) continue;
+          // Сетка (rows по радиусу, cols по углу)
+          const rows = Math.ceil(Math.sqrt(N));
+          const cols = Math.ceil(N / rows);
+          let idx = 0;
+          for (let row = 0; row < rows; row++) {
+            const rr = r1 + dotBaseR + (r2 - r1 - 2*dotBaseR) * (row + 0.5) / rows;
+            const pointsInRow = (row === rows - 1) ? N - cols * (rows - 1) : cols;
+            for (let col = 0; col < pointsInRow; col++, idx++) {
+              if (idx >= N) break;
+              const theta = startA + (endA - startA) * (col + 0.5) / pointsInRow;
+              placed.push({
+                trend: sectorTrends[idx],
+                x: centerX + rr * Math.cos(theta),
+                y: centerY + rr * Math.sin(theta),
+                radius: dotBaseR,
+                cat,
+                intv
+              });
+            }
+          }
+        }
+      }
+      return placed;
+    }
+
+    function drawChart(trends, activeCategories, activeIntervals) {
+      const wrap = document.querySelector('.diagram-wrap');
+      const [svgW, svgH] = getWrapSize();
+      svg.setAttribute('width', svgW);
+      svg.setAttribute('height', svgH);
+      // --- ZOOM / PAN support via viewBox ---
+      svg.setAttribute('viewBox', `${-panX/zoom} ${-panY/zoom} ${svgW/zoom} ${svgH/zoom}`);
+
+      while(svg.lastChild) svg.removeChild(svg.lastChild);
+      svg.appendChild(defs);
+
+      const base = minSide();
+      const centerX = svgW/2, centerY = svgH/2;
+      const radii = getRadii();
+      const outerR = radii[radii.length-1];
+
+      // --- Сектора и кольца ---
+      for (let c = 0; c < categories; c++) {
+        const startA = c * 360 / categories;
+        const endA = (c+1) * 360 / categories;
+        for (let i = 0; i < intervals; i++) {
+          const r1 = radii[i];
+          const r2 = radii[i+1];
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", describeArcPath(centerX, centerY, r2, startA, endA) +
+            (r1 === 0 ? ` L ${centerX},${centerY} Z` : ` L ${centerX + r1 * Math.cos((endA-90)*Math.PI/180)},${centerY + r1 * Math.sin((endA-90)*Math.PI/180)} A ${r1},${r1} 0 ${(endA-startA)>180?1:0} 0 ${centerX + r1 * Math.cos((startA-90)*Math.PI/180)},${centerY + r1 * Math.sin((startA-90)*Math.PI/180)} Z`)
+          );
+          path.setAttribute("fill", blues[i]);
+          path.setAttribute("stroke", "#000");
+          path.setAttribute("stroke-width", 1.5);
+          svg.appendChild(path);
+        }
+      }
+      // --- Радиальные линии ---
+      for (let c = 0; c < categories; c++) {
+        const angle = c * 2 * Math.PI / categories;
+        const x1 = centerX;
+        const y1 = centerY;
+        const x2 = centerX + outerR * Math.cos(angle - Math.PI/2);
+        const y2 = centerY + outerR * Math.sin(angle - Math.PI/2);
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", x1);
+        line.setAttribute("y1", y1);
+        line.setAttribute("x2", x2);
+        line.setAttribute("y2", y2);
+        line.setAttribute("stroke", "#000");
+        line.setAttribute("stroke-width", 1.5);
+        svg.appendChild(line);
+      }
+      // --- Кольца ---
+      for (let i = 1; i < radii.length; i++) {
+        const r = radii[i];
+        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circle.setAttribute("cx", centerX);
+        circle.setAttribute("cy", centerY);
+        circle.setAttribute("r", r);
+        circle.setAttribute("fill", "none");
+        circle.setAttribute("stroke", "#000");
+        circle.setAttribute("stroke-width", 1.5);
+        svg.appendChild(circle);
+      }
+      // --- Подписи категорий по дуге ---
+      const labelRadius = outerR + base*0.01;
+      for (let c = 0; c < categories; c++) {
+        let startA = c * 360 / categories + 2;
+        let endA = (c + 1) * 360 / categories - 2;
+        const pathId = "catLabelArc" + c;
+        const flip = flipped.includes(c);
+
+        let oldArc = document.getElementById(pathId);
+        if (oldArc) defs.removeChild(oldArc);
+        const arcPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        arcPath.setAttribute("id", pathId);
+        arcPath.setAttribute("d", describeArcPath(centerX, centerY, labelRadius, startA, endA, flip));
+        arcPath.setAttribute("fill", "none");
+        defs.appendChild(arcPath);
+
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("class", "category-label");
+        text.setAttribute("fill", categoryColors[c]);
+        text.style.fontSize = (base*0.027) + "px";
+        text.style.textShadow = "0 1px 7px #fff";
+        const textPath = document.createElementNS("http://www.w3.org/2000/svg", "textPath");
+        textPath.setAttribute("href", "#" + pathId);
+        textPath.setAttribute("startOffset", "50%");
+        textPath.setAttribute("text-anchor", "middle");
+        textPath.textContent = categoriesList[c];
+        if (flip) text.setAttribute("dominant-baseline", "hanging");
+        text.appendChild(textPath);
+        svg.appendChild(text);
+      }
+
+      // --- Размещаем точки трендов с равномерным spread ---
+      const placed = sectorSpread(trends, base, centerX, centerY, radii, activeCategories, activeIntervals);
+      for(let dot of placed) {
+        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circle.setAttribute("class", "trend-dot");
+        circle.setAttribute("cx", dot.x);
+        circle.setAttribute("cy", dot.y);
+        circle.setAttribute("r", dot.radius);
+        circle.setAttribute("fill", categoryColors[dot.cat]);
+        circle.setAttribute("stroke", "#fff");
+        circle.setAttribute("stroke-width", base*0.004);
+
+        // --- Tooltip на ховер ---
+        circle.addEventListener('mouseenter', function(e) {
+          showTrendTooltip(dot, e);
+        });
+        circle.addEventListener('mousemove', function(e) {
+          moveTrendTooltip(dot, e);
+        });
+        circle.addEventListener('mouseleave', function() {
+          hideTrendTooltip();
+        });
+
+        // --- Поп-ап только если есть описание ---
+        const hasDesc = !!(dot.trend.Описание && dot.trend.Описание.trim());
+        if (hasDesc) {
+          circle.style.cursor = "pointer";
+          circle.addEventListener('click', e => {
+            hideTrendTooltip();
+            showTrendModal(dot.trend);
+          });
+        } else {
+          circle.style.cursor = "default";
+        }
+        svg.appendChild(circle);
+      }
+    }
+
+    // ---- Tooltip для тренда ----
+    function showTrendTooltip(dot, evt) {
+      const tooltip = document.getElementById('trend-tooltip');
+      // Очистка
+      tooltip.innerHTML = '';
+      // Содержимое
+      const txt = document.createElement('span');
+      txt.textContent = dot.trend.Название || '';
+      tooltip.appendChild(txt);
+
+      // Определяем сторону (если x больше центра svg — слева)
+      const svgRect = svg.getBoundingClientRect();
+      const dotX = evt.clientX, dotY = evt.clientY;
+      let side = 'right';
+      if (dotX - svgRect.left > svgRect.width * 0.6) side = 'left';
+      tooltip.className = side;
+
+      // Добавляем стрелку
+      const arrow = document.createElement('span');
+      arrow.className = 'arrow';
+      arrow.innerHTML =
+        '<svg width="13" height="14" viewBox="0 0 13 14"><polygon fill="#fff" stroke="#e1e2f0" stroke-width="1.5" points="0,7 13,0 13,14"/></svg>';
+      tooltip.appendChild(arrow);
+
+      tooltip.style.display = 'block';
+      moveTrendTooltip(dot, evt);
+    }
+    function moveTrendTooltip(dot, evt) {
+      const tooltip = document.getElementById('trend-tooltip');
+      const side = tooltip.className;
+      const margin = 18;
+      const dotX = evt.clientX, dotY = evt.clientY;
+      let left;
+      if (side === 'right') {
+        left = dotX + margin;
+      } else {
+        left = dotX - tooltip.offsetWidth - margin;
+      }
+      let top = dotY - tooltip.offsetHeight/2;
+      // Не выходить за края
+      left = Math.max(5, Math.min(left, window.innerWidth - tooltip.offsetWidth - 5));
+      top = Math.max(5, Math.min(top, window.innerHeight - tooltip.offsetHeight - 5));
+      tooltip.style.left = left + 'px';
+      tooltip.style.top = top + 'px';
+    }
+    function hideTrendTooltip() {
+      const tooltip = document.getElementById('trend-tooltip');
+      tooltip.style.display = 'none';
+    }
+
+    // ---- Модалка ----
+    function showTrendModal(trend) {
+      const modal = document.getElementById('trend-modal');
+      const card = document.getElementById('trend-modal-card');
+      // Название
+      card.querySelector('.modal-title').textContent = trend.Название || '';
+      // Теги: категория + интервал
+      const tags = card.querySelector('.modal-tags');
+      tags.innerHTML = '';
+      // Категория
+      const catIdx = categoriesList.indexOf(trend.Категория);
+      if (trend.Категория) {
+        const catTag = document.createElement('span');
+        catTag.className = 'tag tag-category';
+        catTag.style.background = categoryColors[catIdx>=0?catIdx:0];
+        catTag.textContent = trend.Категория;
+        tags.appendChild(catTag);
+      }
+      // Интервал
+      if (trend.Интервал) {
+        const intvIdx = intervalList.indexOf(trend.Интервал);
+        const intvTag = document.createElement('span');
+        intvTag.className = 'tag tag-interval';
+        intvTag.style.background = intervalColors[intvIdx>=0?intvIdx:0];
+        intvTag.textContent = trend.Интервал;
+        tags.appendChild(intvTag);
+      }
+      // Описание
+      card.querySelector('.modal-desc').textContent = trend.Описание || '';
+      // Связанные тренды
+      const relDiv = card.querySelector('.modal-related');
+      if (trend["Связанные тренды"] && trend["Связанные тренды"].trim()) {
+        relDiv.style.display = "";
+        relDiv.innerHTML = `<b>Связанные тренды:</b> ${trend["Связанные тренды"]}`;
+      } else {
+        relDiv.style.display = "none";
+        relDiv.innerHTML = "";
+      }
+      modal.classList.add('show');
+      card.focus();
+    }
+    function closeTrendModal() {
+      document.getElementById('trend-modal').classList.remove('show');
+    }
+    document.getElementById('trend-modal').addEventListener('click', function(e) {
+      if (e.target === this) closeTrendModal();
+    });
+    document.getElementById('modal-close-btn').addEventListener('click', closeTrendModal);
+    document.addEventListener('keydown', function(e){
+      if (e.key === 'Escape') closeTrendModal();
+    });
+
+    function parseCSV(text) {
+      const lines = text.trim().split(/\r?\n/);
+      const headers = lines[0].split(",");
+      return lines.slice(1).map(line => {
+        const values = [];
+        let current = '';
+        let inQuotes = false;
+        for (let i=0; i<line.length; i++) {
+          const char = line[i];
+          if (char === '"' && line[i+1] === '"') {
+            current += '"';
+            i++;
+          } else if (char === '"') {
+            inQuotes = !inQuotes;
+          } else if (char === ',' && !inQuotes) {
+            values.push(current);
+            current = '';
+          } else {
+            current += char;
+          }
+        }
+        values.push(current);
+        const obj = {};
+        headers.forEach((h, i) => obj[h.trim()] = (values[i]||'').trim());
+        return obj;
+      });
+    }
+
+    // --- Кастомные выпадающие фильтры по категориям и интервалам ---
+    function renderFilters(activeCategories, activeIntervals, onChange) {
+      const filtersDiv = document.getElementById('filters');
+      filtersDiv.innerHTML = '';
+
+      // Категории dropdown
+      const catWrap = document.createElement('div');
+      catWrap.className = 'dropdown-wrap';
+      const catBtn = document.createElement('button');
+      catBtn.type = "button";
+      catBtn.className = 'dropdown-btn';
+      catBtn.innerHTML = 'Категории';
+      catBtn.addEventListener('click', (e)=>{
+        closeAllDropdowns(catMenu);
+        catMenu.classList.toggle('open');
+        catBtn.classList.toggle('open');
+      });
+      catWrap.appendChild(catBtn);
+
+      const catMenu = document.createElement('div');
+      catMenu.className = 'dropdown-menu';
+      categoriesList.forEach((cat, i) => {
+        const label = document.createElement('label');
+        label.title = cat;
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = cat;
+        input.checked = activeCategories.includes(cat);
+        input.addEventListener('change', onChange);
+        label.appendChild(input);
+        const span = document.createElement('span');
+        span.textContent = cat;
+        span.style.color = categoryColors[i];
+        label.appendChild(span);
+        catMenu.appendChild(label);
+      });
+      catWrap.appendChild(catMenu);
+      filtersDiv.appendChild(catWrap);
+
+      // Интервалы dropdown
+      const intvWrap = document.createElement('div');
+      intvWrap.className = 'dropdown-wrap';
+      const intvBtn = document.createElement('button');
+      intvBtn.type = "button";
+      intvBtn.className = 'dropdown-btn';
+      intvBtn.innerHTML = 'Интервалы';
+      intvBtn.addEventListener('click', (e)=>{
+        closeAllDropdowns(intvMenu);
+        intvMenu.classList.toggle('open');
+        intvBtn.classList.toggle('open');
+      });
+      intvWrap.appendChild(intvBtn);
+
+      const intvMenu = document.createElement('div');
+      intvMenu.className = 'dropdown-menu';
+      intervalList.forEach((intv, i) => {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = intv;
+        input.checked = activeIntervals.includes(intv);
+        input.addEventListener('change', onChange);
+        label.appendChild(input);
+        const span = document.createElement('span');
+        span.textContent = intv;
+        label.appendChild(span);
+        intvMenu.appendChild(label);
+      });
+      intvWrap.appendChild(intvMenu);
+      filtersDiv.appendChild(intvWrap);
+
+      // Клик вне dropdown — закрыть
+      document.addEventListener('mousedown', function handler(e) {
+        if (!filtersDiv.contains(e.target)) {
+          catMenu.classList.remove('open'); catBtn.classList.remove('open');
+          intvMenu.classList.remove('open'); intvBtn.classList.remove('open');
+        }
+      }, {capture: true, once: true});
+    }
+    function closeAllDropdowns(except) {
+      document.querySelectorAll('.dropdown-menu').forEach(menu=>{
+        if(menu!==except) menu.classList.remove('open');
+      });
+      document.querySelectorAll('.dropdown-btn').forEach(btn=>{
+        if(except && !except.parentElement.contains(btn)) btn.classList.remove('open');
+      });
+    }
+
+    // --- Управление фильтрами и рендером ---
+    let allTrends = [];
+    let lastCategories = categoriesList.slice();
+    let lastIntervals = intervalList.slice();
+    function redraw() {
+      const filtersDiv = document.getElementById('filters');
+      const checkedCats = [];
+      const checkedInts = [];
+      const catInputs = filtersDiv.querySelectorAll('.dropdown-wrap:nth-child(1) input[type=checkbox]');
+      catInputs.forEach((input,i)=>{ if(input.checked) checkedCats.push(categoriesList[i]); });
+      const intvInputs = filtersDiv.querySelectorAll('.dropdown-wrap:nth-child(2) input[type=checkbox]');
+      intvInputs.forEach((input,i)=>{ if(input.checked) checkedInts.push(intervalList[i]); });
+      lastCategories = checkedCats.length ? checkedCats : categoriesList.slice();
+      lastIntervals = checkedInts.length ? checkedInts : intervalList.slice();
+      drawChart(allTrends, lastCategories, lastIntervals);
+    }
+
+    document.getElementById('csvinput').addEventListener('change', function(e) {
+      if (!e.target.files[0]) return;
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const csv = evt.target.result;
+        allTrends = parseCSV(csv);
+        renderFilters(lastCategories, lastIntervals, redraw);
+        redraw();
+      };
+      reader.readAsText(file, 'utf-8');
+    });
+
+    window.addEventListener('resize', () => {
+      if (allTrends.length) {
+        drawChart(allTrends, lastCategories, lastIntervals);
+      }
+    });
+        function clampPan() {
+    const [svgW, svgH] = getWrapSize();
+    const viewW = svgW / zoom;
+    const viewH = svgH / zoom;
+    // Ограничения: 
+    // 0 <= panX <= (svgW * (zoom - 1))
+    // 0 <= panY <= (svgH * (zoom - 1))
+    // или вариант, если разрешить видеть край (оставлять 20px):
+    const minPanX = -viewW * 0.95; // можно регулировать 0.95
+    const maxPanX = svgW * (zoom - 1) + viewW * 0.95;
+    const minPanY = -viewH * 0.95;
+    const maxPanY = svgH * (zoom - 1) + viewH * 0.95;
+    panX = Math.max(minPanX, Math.min(maxPanX, panX));
+    panY = Math.max(minPanY, Math.min(maxPanY, panY));
+    }
+
+
+    // ---- ZOOM/PAN EVENTS ----
+    svg.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      let scale = (e.deltaY < 0) ? 1.12 : 0.89;
+      // Clamp zoom
+      let newZoom = zoom * scale;
+      if (newZoom < 0.27) scale = 0.27 / zoom;
+      if (newZoom > 8) scale = 8 / zoom;
+      // Центр масштабирования — место курсора
+      const rect = svg.getBoundingClientRect();
+      const svgX = (e.clientX - rect.left) * zoom + panX;
+      const svgY = (e.clientY - rect.top) * zoom + panY;
+      zoom *= scale;
+      panX = svgX - (e.clientX - rect.left) * zoom;
+      panY = svgY - (e.clientY - rect.top) * zoom;
+      clampPan();
+      redraw();
+    }, {passive:false});
+    svg.addEventListener('mousedown', function(e) {
+      if (e.button !== 0) return;
+      isPanning = true;
+      startPan = {x: e.clientX, y: e.clientY};
+      startPanOffset = {x: panX, y: panY};
+      document.body.style.cursor = 'grab';
+    });
+    window.addEventListener('mousemove', function(e) {
+      if (!isPanning) return;
+      const dx = e.clientX - startPan.x;
+      const dy = e.clientY - startPan.y;
+      panX = startPanOffset.x + dx * zoom;
+      panY = startPanOffset.y + dy * zoom;
+      clampPan();
+      redraw();
+    });
+    window.addEventListener('mouseup', function(e) {
+      if (isPanning) {
+        isPanning = false;
+        document.body.style.cursor = '';
+      }
+    });
+    svg.addEventListener('dblclick', function(e){
+      zoom = 1;
+      panX = 0;
+      panY = 0;
+      clampPan();
+      redraw();
+    });
+
+  </script>
+</body>
+</html>
