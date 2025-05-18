@@ -1,3 +1,5 @@
-matplotlib==3.10.1
-pandas==2.2.3
-wordcloud==1.9.4
+python-telegram-bot==20.7
+python-dotenv
+fastapi
+uvicorn
+pydantic

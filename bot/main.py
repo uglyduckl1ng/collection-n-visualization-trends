@@ -1,13 +1,8 @@
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, PollAnswerHandler
 from dotenv import load_dotenv
 import os
-import pandas as pd
-import csv
-from datetime import datetime
-
-from bot.trend_storage import save_trend_to_csv, get_user_trends, update_trend, delete_trend
-from viz.radar_map import generate_radar_map
+from bot.trend_storage import save_trend_to_db, get_user_trends, update_trend, delete_trend, get_all_votes, has_user_voted, add_user_vote, increase_vote_result
 
 
 # =========================
@@ -25,8 +20,8 @@ DATA_PATH = "data/trends.csv"
 # =========================
 # Кнопки
 MAIN_MENU_BUTTONS = [
-    ["Записать тренд", "Сгенерировать радарную карту"],
-    ["Мои тренды"]
+    ["Записать тренд", "Мои тренды"],
+    ["Проголосовать"]
 ]
 CATEGORY_BUTTONS = [["1", "2", "3"], ["4", "5", "6"], ["Назад"]]
 TIMEZONE_BUTTONS = [["1", "2"], ["3", "4"], ["Назад"]]
@@ -34,19 +29,19 @@ TIMEZONE_BUTTONS = [["1", "2"], ["3", "4"], ["Назад"]]
 # =========================
 # Словари соответствий
 CATEGORIES = {
-    "1": "Технологии",
-    "2": "Процессы и методологии",
-    "3": "Культура и организация",
+    "1": "Политика",
+    "2": "Экономика",
+    "3": "Социум",
     "4": "Стандарты и безопасность",
     "5": "Лидерство и стратегия",
     "6": "Другое"
 }
 
 TIME_ZONES = {
-    "1": "Сейчас (Новая нормальность)",
-    "2": "1-5 лет (Краткосрочное планирование)",
-    "3": "5-20 лет (Среднесрочное планирование)",
-    "4": "20+ лет (Долгосрочное планирование)"
+    "1": "1-3 года (Новая нормальность)",
+    "2": "5-7 лет (Краткосрочное планирование)",
+    "3": "7-10 лет (Среднесрочное планирование)",
+    "4": "10+ лет (Долгосрочное планирование)"
 }
 
 
@@ -77,18 +72,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
-            return
-
-        if text.lower() == "сгенерировать радарную карту":
-            # Генерируем карту
-            generate_radar_map()
-
-            # Отправляем пользователю картинку
-            image_path = "pics/trends_diagram.svg"
-            if os.path.exists(image_path):
-                await update.message.reply_document(document=open(image_path, "rb"))
-            else:
-                await update.message.reply_text("Не удалось сгенерировать карту 😢")
             return
 
 
@@ -122,9 +105,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=keyboard
             )
             return
+        
+        if text.lower() == "проголосовать":
+            votes = get_all_votes()
+            if not votes:
+                await update.message.reply_text("Пока нет активных голосований.")
+                return
+            # Кнопки: по одной на каждое голосование + “Назад”
+            keyboard = [[f"Голосовать: {vote['vote_name']}"] for vote in votes]
+            keyboard.append(["Назад"])
+            msg = "Доступные голосования:\n"
+            for i, vote in enumerate(votes, 1):
+                msg += f"{i}. {vote['vote_name']} (Тренды: {', '.join(vote['trends'])})\n"
+            await update.message.reply_text(msg, reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+            user_states[user_id] = {"step": "choose_vote", "votes": votes}
+            return
 
         await update.message.reply_text("Пожалуйста, выберите действие через кнопки ⬇️")
         return
+    
 
     # ========== FSM этапы ==========
 
@@ -143,10 +142,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = ReplyKeyboardMarkup(TIMEZONE_BUTTONS, resize_keyboard=True)
             await update.message.reply_text(
                 "*Выберите горизонт планирования тренда:*\n\n"
-                "`1.` Сейчас (Новая нормальность)\n"
-                "`2.` 1-5 лет (Краткосрочное планирование)\n"
-                "`3.` 5-20 лет (Среднесрочное планирование)\n"
-                "`4.` 20+ лет (Долгосрочное планирование)",
+                "`1.` 1-3 года (Новая нормальность)\n"
+                "`2.` 5-7 лет (Краткосрочное планирование)\n"
+                "`3.` 7-10 лет (Среднесрочное планирование)\n"
+                "`4.` 10+ лет (Долгосрочное планирование)",
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
@@ -189,10 +188,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = ReplyKeyboardMarkup(TIMEZONE_BUTTONS, resize_keyboard=True)
             await update.message.reply_text(
                 "*Выберите горизонт планирования тренда:*\n\n"
-                "`1.` Сейчас (Новая нормальность)\n"
-                "`2.` 1-5 лет (Краткосрочное планирование)\n"
-                "`3.` 5-20 лет (Среднесрочное планирование)\n"
-                "`4.` 20+ лет (Долгосрочное планирование)",
+                "`1.` 1-3 года (Новая нормальность)\n"
+                "`2.` 5-7 лет (Краткосрочное планирование)\n"
+                "`3.` 7-10 лет (Среднесрочное планирование)\n"
+                "`4.` 10+ лет (Долгосрочное планирование)",
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
@@ -203,7 +202,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         category = user_states[user_id]["category"]
         time_zone = user_states[user_id]["time_zone"]
 
-        save_trend_to_csv(user_id, category, time_zone, trend_text)
+        save_trend_to_db(user_id, category, time_zone, trend_text)
         user_states.pop(user_id)
 
         keyboard = ReplyKeyboardMarkup(MAIN_MENU_BUTTONS, resize_keyboard=True)
@@ -352,10 +351,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = ReplyKeyboardMarkup(TIMEZONE_BUTTONS, resize_keyboard=True)
             await update.message.reply_text(
                 "*Выберите новый горизонт планирования тренда:*\n\n"
-                "`1.` Сейчас (Новая нормальность)\n"
-                "`2.` 1-5 лет (Краткосрочное планирование)\n"
-                "`3.` 5-20 лет (Среднесрочное планирование)\n"
-                "`4.` 20+ лет (Долгосрочное планирование)",
+                "`1.` 1-3 года (Новая нормальность)\n"
+                "`2.` 5-7 лет (Краткосрочное планирование)\n"
+                "`3.` 7-10 лет (Среднесрочное планирование)\n"
+                "`4.` 10+ лет (Долгосрочное планирование)",
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
@@ -400,10 +399,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = ReplyKeyboardMarkup(TIMEZONE_BUTTONS, resize_keyboard=True)
             await update.message.reply_text(
                 "*Выберите новый горизонт планирования тренда:*\n\n"
-                "`1.` Сейчас (Новая нормальность)\n"
-                "`2.` 1-5 лет (Краткосрочное планирование)\n"
-                "`3.` 5-20 лет (Среднесрочное планирование)\n"
-                "`4.` 20+ лет (Долгосрочное планирование)",
+                "`1.` 1-3 года (Новая нормальность)\n"
+                "`2.` 5-7 лет (Краткосрочное планирование)\n"
+                "`3.` 7-10 лет (Среднесрочное планирование)\n"
+                "`4.` 10+ лет (Долгосрочное планирование)",
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
@@ -436,6 +435,54 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=keyboard
             )
 
+    # Выбор голосования
+    if state and state.get("step") == "choose_vote":
+        if text == "Назад":
+            user_states.pop(user_id, None)
+            keyboard = ReplyKeyboardMarkup(MAIN_MENU_BUTTONS, resize_keyboard=True)
+            await update.message.reply_text("Вы вернулись в главное меню.", reply_markup=keyboard)
+            return
+        if text.startswith("Голосовать: "):
+            vote_name = text.replace("Голосовать: ", "")
+            if has_user_voted(user_id, vote_name):
+                await update.message.reply_text("Вы уже участвовали в этом голосовании!")
+                return
+            # Находим нужное голосование
+            votes = state["votes"]
+            vote = next((v for v in votes if v["vote_name"] == vote_name), None)
+            if vote:
+                poll_message = await update.message.reply_poll(
+                    question=f"Голосование: {vote_name}",
+                    options=vote["trends"],
+                    is_anonymous=False,
+                    allows_multiple_answers=False
+                )
+                user_states[user_id] = {
+                    "step": "wait_for_poll_answer",
+                    "vote_name": vote_name,
+                    "poll_id": poll_message.poll.id
+                }
+                return
+        await update.message.reply_text("Пожалуйста, выберите голосование через кнопки ⬇️")
+        return
+
+async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.poll_answer.user.id
+    poll_id = update.poll_answer.poll_id
+    # Ищем, к какому голосованию относится этот poll_id
+    for uid, st in user_states.items():
+        if st.get("poll_id") == poll_id:
+            vote_name = st["vote_name"]
+            option_id = update.poll_answer.option_ids[0]
+            votes = get_all_votes()
+            vote = next((v for v in votes if v["vote_name"] == vote_name), None)
+            if vote:
+                trend_name = vote["trends"][option_id]
+                add_user_vote(user_id, vote_name)
+                increase_vote_result(vote_name, trend_name)
+                await context.bot.send_message(chat_id=user_id, text="Спасибо за ваш голос!")
+                user_states.pop(user_id, None)
+            break
 
 # =========================
 # Запуск бота
@@ -444,6 +491,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(PollAnswerHandler(handle_poll_answer))  # ← вот это добавь
     print("Бот запущен...")
     app.run_polling()
 
