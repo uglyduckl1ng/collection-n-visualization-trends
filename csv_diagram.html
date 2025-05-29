@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Тренд-диаграмма — точки не пропадают</title>
+  <style>
+    body { background: #fff; font-family: Arial, sans-serif; margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    #trend-diagram-container { width: 600px; height: 600px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; position: relative; }
+    #diagram-title { font-family: Arial, sans-serif; font-size: 2em; font-weight: bold; letter-spacing: 1.5px; margin-bottom: 8px; min-height: 32px; text-align: center; user-select: none; }
+    #diagram-svg { display: block; background: transparent; margin-top: 0; }
+    #csvinput { position: absolute; top: 10px; left: 10px; z-index: 2; }
+    #no-trends-msg { margin-top: 60px; font-size: 1.1em; color: #aaa; font-style: italic; text-align: center; width: 350px; }
+  </style>
+</head>
+<body>
+<div id="trend-diagram-container">
+  <input type="file" id="csvinput" accept=".csv">
+  <div id="diagram-title"></div>
+  <svg id="diagram-svg" width="500" height="500"></svg>
+  <div id="no-trends-msg" style="display:none">Нет трендов для этой категории.</div>
+</div>
+<script>
+const categoryMeta = [
+  { name: "Экономические тренды",   color: "#FFB300" },
+  { name: "Политические тренды",    color: "#FF1E32" },
+  { name: "Экологические тренды",   color: "#15B51C" },
+  { name: "Технологические тренды", color: "#2A4DFF" },
+  { name: "Юридические тренды",     color: "#A100FF" },
+  { name: "Социальные тренды",      color: "#FF7100" }
+];
+const intervalColors = ["#a5b4e2", "#6784c9", "#4055a8"];
+const intervalMeta = [
+  { name: "1-3" },
+  { name: "3-5" },
+  { name: "5-7" }
+];
+
+let trends = [];
+let filteredCategories = [];
+
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  const headers = lines[0].split(",");
+  return lines.slice(1).map(line => {
+    const values = [];
+    let value = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; ++i) {
+      if (line[i] === '"') inQuotes = !inQuotes;
+      else if (line[i] === ',' && !inQuotes) {
+        values.push(value.trim().replace(/^"|"$/g, ""));
+        value = "";
+      } else value += line[i];
+    }
+    values.push(value.trim().replace(/^"|"$/g, ""));
+    const obj = {};
+    headers.forEach((h, j) => obj[h.trim()] = (values[j] || ""));
+    if (obj["Связанные тренды"])
+      obj["Связанные тренды"] = obj["Связанные тренды"].split(";").map(s => s.trim()).filter(Boolean);
+    else obj["Связанные тренды"] = [];
+    return obj;
+  });
+}
+
+function measureTextLines(text, fontSize, fontWeight, fontFamily, maxWidth) {
+  const svgNS = "http://www.w3.org/2000/svg";
+  const tempSvg = document.createElementNS(svgNS, "svg");
+  tempSvg.setAttribute("style", "visibility:hidden;position:absolute;left:-9999px;top:-9999px;");
+  document.body.appendChild(tempSvg);
+
+  let lines = [];
+  let words = text.split(' ');
+  let line = '';
+  for (let w = 0; w < words.length; w++) {
+    let testLine = (line ? line + ' ' : '') + words[w];
+    const tempText = document.createElementNS(svgNS, "text");
+    tempText.setAttribute("font-size", fontSize);
+    tempText.setAttribute("font-weight", fontWeight);
+    tempText.setAttribute("font-family", fontFamily);
+    tempText.textContent = testLine;
+    tempSvg.appendChild(tempText);
+    let width = tempText.getBBox().width;
+    tempSvg.removeChild(tempText);
+    if (width > maxWidth && line) {
+      lines.push(line);
+      line = words[w];
+    } else {
+      line = testLine;
+    }
+  }
+  if (line) lines.push(line);
+  document.body.removeChild(tempSvg);
+  return lines;
+}
+
+function measureTextWidth(text, fontSize, fontWeight, fontFamily) {
+  const svgNS = "http://www.w3.org/2000/svg";
+  const tempSvg = document.createElementNS(svgNS, "svg");
+  tempSvg.setAttribute("style", "visibility:hidden;position:absolute;left:-9999px;top:-9999px;");
+  document.body.appendChild(tempSvg);
+  const tempText = document.createElementNS(svgNS, "text");
+  tempText.setAttribute("font-size", fontSize);
+  tempText.setAttribute("font-weight", fontWeight);
+  tempText.setAttribute("font-family", fontFamily);
+  tempText.textContent = text;
+  tempSvg.appendChild(tempText);
+  const bbox = tempText.getBBox();
+  document.body.removeChild(tempSvg);
+  return bbox.width;
+}
+
+function isBoxOverlap(box1, box2) {
+  return (
+    box1.x < box2.x + box2.w &&
+    box1.x + box1.w > box2.x &&
+    box1.y < box2.y + box2.h &&
+    box1.y + box1.h > box2.y
+  );
+}
+function isPointInBox(px, py, box) {
+  return (px >= box.x && px <= box.x + box.w && py >= box.y && py <= box.y + box.h);
+}
+
+function getIntervalRadii(width, height, pointRadius, pad) {
+  const margin = 22;
+  const radiusMax = Math.min(width, height) / 2 - pad - margin;
+  const r1 = radiusMax * 0.44;
+  const r2 = radiusMax * 0.75;
+  const r3 = radiusMax;
+  return [
+    { inner: 0,        outer: r1 - pad },
+    { inner: r1 + pad, outer: r2 - pad },
+    { inner: r2 + pad, outer: r3 - pad }
+  ];
+}
+
+function getAdaptiveScale(trendCount) {
+  if (trendCount > 25) return 0.34;
+  if (trendCount > 19) return 0.38;
+  if (trendCount > 13) return 0.47;
+  if (trendCount > 7)  return 0.6;
+  return 0.72;
+}
+
+function isDotInInterval(x, y, cx, cy, inner, outer) {
+  const d = Math.sqrt((x-cx)*(x-cx) + (y-cy)*(y-cy));
+  return (d >= inner) && (d <= outer);
+}
+
+function drawDiagram(categoryIdx) {
+  const svg = document.getElementById('diagram-svg');
+  svg.innerHTML = '';
+  const title = document.getElementById('diagram-title');
+  const noTrendsMsg = document.getElementById('no-trends-msg');
+  const width = 500, height = 500;
+  const cx = width / 2;
+  const cy = height / 2;
+
+  if (filteredCategories.length === 0) {
+    title.textContent = '';
+    svg.style.display = 'none';
+    noTrendsMsg.style.display = '';
+    noTrendsMsg.textContent = 'Нет трендов ни для одной категории.';
+    return;
+  }
+
+  const catMetaIdx = filteredCategories[categoryIdx];
+  const thisCat = categoryMeta[catMetaIdx];
+  const trendsHere = trends.filter(t => t["Категория"] === thisCat.name);
+
+  if (!trendsHere.length) {
+    title.textContent = '';
+    svg.style.display = 'none';
+    noTrendsMsg.style.display = '';
+    noTrendsMsg.textContent = 'Нет трендов для этой категории.';
+    return;
+  }
+
+  noTrendsMsg.style.display = 'none';
+  svg.style.display = '';
+  title.textContent = thisCat.name;
+  title.style.color = thisCat.color;
+  title.style.fontFamily = 'Arial, sans-serif';
+
+  const scale = getAdaptiveScale(trendsHere.length);
+
+  const pointRadius = 10 * scale;
+  const pad = pointRadius + 6 * scale;
+  const marginBetween = 7 * scale;
+  const intervalRadii = getIntervalRadii(width, height, pointRadius, pad);
+
+  for (let i = 2; i >= 0; i--) {
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", cx);
+    circle.setAttribute("cy", cy);
+    circle.setAttribute("r", intervalRadii[i].outer);
+    circle.setAttribute("fill", intervalColors[i]);
+    svg.appendChild(circle);
+  }
+  for (let i = 2; i >= 0; i--) {
+    const border = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    border.setAttribute("cx", cx);
+    border.setAttribute("cy", cy);
+    border.setAttribute("r", intervalRadii[i].outer);
+    border.setAttribute("fill", "none");
+    border.setAttribute("stroke", "#111");
+    border.setAttribute("stroke-width", "1.1");
+    svg.appendChild(border);
+  }
+
+  const minDist = 1.7 * pointRadius + 1;
+  let placedBoxes = [];
+
+  for (let intervalIdx = 0; intervalIdx < intervalMeta.length; intervalIdx++) {
+    let intervalTrends = trendsHere.filter(t => intervalMeta[intervalIdx].name === t["Интервал"]);
+    let n = intervalTrends.length;
+    if (n === 0) continue;
+    let nArc = Math.ceil(n * 0.7);
+    let baseAngle = Math.random() * Math.PI * 2;
+    for (let i = 0; i < n; i++) {
+      const trend = intervalTrends[i];
+      let perTrendScale = (trend["Название"].length > 40) ? scale * 0.9 : scale;
+      const fontSize = 13 * perTrendScale;
+      const padX = 8 * perTrendScale;
+      const padY = 4.5 * perTrendScale;
+      const rx = 8 * perTrendScale;
+      const fontWeight = "bold";
+      const fontFamily = "Arial,sans-serif";
+
+      let found = false, tries = 0, lines = [];
+      let angle, r, dotX, dotY, right, boxX, boxY, box, boxW, boxH;
+      while (!found && tries < 1600) {
+        if (i < nArc) angle = baseAngle + i * 2 * Math.PI / nArc + Math.random()*0.13 - 0.065;
+        else angle = Math.random() * 2 * Math.PI;
+
+        r = Math.sqrt(Math.random() * (intervalRadii[intervalIdx].outer**2 - intervalRadii[intervalIdx].inner**2) + intervalRadii[intervalIdx].inner**2);
+
+        right = Math.cos(angle) > 0;
+        dotX = cx + r * Math.cos(angle);
+        dotY = cy + r * Math.sin(angle);
+
+        // --- КЛЮЧ: динамически уменьшаем ширину облака, если оно выходит за край SVG ---
+        let maxBoxW = Math.min(210 * perTrendScale, width / 2 - 30);
+        let linesOK = false;
+        for (let testW = maxBoxW; testW >= 80 * perTrendScale; testW -= 8) {
+          lines = measureTextLines(trend["Название"], fontSize, fontWeight, fontFamily, testW);
+          boxW = Math.max(...lines.map(line => measureTextWidth(line, fontSize, fontWeight, fontFamily))) + padX * 2;
+          boxH = lines.length * fontSize + padY * 2;
+          boxX = right ? (dotX + pointRadius + marginBetween) : (dotX - pointRadius - marginBetween - boxW);
+          boxY = dotY - boxH / 2;
+          if (boxX < 0) continue;
+          if (boxX + boxW > width) continue;
+          linesOK = true;
+          break;
+        }
+        if (!linesOK) { tries++; continue; }
+
+        if (boxY < 0) boxY = 1;
+        if (boxY + boxH > height) boxY = height - boxH - 1;
+
+        box = {x: boxX, y: boxY, w: boxW, h: boxH};
+
+        // Точка не должна попадать внутрь облака
+        if (dotX > boxX && dotX < boxX + boxW && dotY > boxY && dotY < boxY + boxH) {
+          if (lines.length < 3) continue;
+        }
+
+        // Проверка: точка строго внутри своего интервала
+        if (!isDotInInterval(dotX, dotY, cx, cy, intervalRadii[intervalIdx].inner, intervalRadii[intervalIdx].outer)) { tries++; continue; }
+
+        // Нет наложений ни облаков, ни точек
+        let overlap = false;
+        for (let p of placedBoxes) {
+          if (isBoxOverlap(box, p.box)) { overlap = true; break; }
+          if (isPointInBox(dotX, dotY, p.box)) { overlap = true; break; }
+          if (isPointInBox(p.x, p.y, box)) { overlap = true; break; }
+          const dx2 = dotX - p.x, dy2 = dotY - p.y;
+          if (Math.sqrt(dx2 * dx2 + dy2 * dy2) < minDist) { overlap = true; break; }
+        }
+        if (!overlap) {
+          found = true;
+          placedBoxes.push({x: dotX, y: dotY, box});
+          trend._draw = {x: dotX, y: dotY, boxW, boxH, boxX, boxY, right, scale: perTrendScale, lines, fontSize, padX, rx, color: thisCat.color};
+        }
+        tries++;
+      }
+    }
+  }
+
+  // СНАЧАЛА РИСУЕМ ОБЛАКА, потом точки!
+  for (const trend of trendsHere) {
+    if (!trend._draw) continue;
+    const d = trend._draw;
+    // Облачко
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rect.setAttribute("x", d.boxX);
+    rect.setAttribute("y", d.boxY);
+    rect.setAttribute("width", d.boxW);
+    rect.setAttribute("height", d.boxH);
+    rect.setAttribute("rx", d.rx);
+    rect.setAttribute("fill", "#fff");
+    rect.setAttribute("stroke", d.color);
+    rect.setAttribute("stroke-width", "2.3");
+    rect.setAttribute("filter", "drop-shadow(0px 2px 5px rgba(80,80,80,0.13))");
+    svg.appendChild(rect);
+
+    // Текст с переносом строк (tspan)
+    for (let i = 0; i < d.lines.length; i++) {
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", d.boxX + d.boxW / 2);
+      text.setAttribute("y", d.boxY + d.padX + d.fontSize * (i + 0.82));
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("fill", d.color);
+      text.setAttribute("font-weight", "bold");
+      text.setAttribute("font-size", d.fontSize + "px");
+      text.setAttribute("font-family", "Arial,sans-serif");
+      text.textContent = d.lines[i];
+      svg.appendChild(text);
+    }
+  }
+  for (const trend of trendsHere) {
+    if (!trend._draw) continue;
+    const d = trend._draw;
+    // Точка (исправлен namespace!)
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", d.x);
+    circle.setAttribute("cy", d.y);
+    circle.setAttribute("r", 10 * d.scale);
+    circle.setAttribute("fill", "#fff");
+    circle.setAttribute("stroke", d.color);
+    circle.setAttribute("stroke-width", "2.3");
+    svg.appendChild(circle);
+  }
+}
+
+// Карусель с проверкой наличия трендов
+let categoryIdx = 0, carouselTimer;
+function startCarousel() {
+  filteredCategories = [];
+  for (let i = 0; i < categoryMeta.length; ++i) {
+    if (trends.some(t => t["Категория"] === categoryMeta[i].name)) filteredCategories.push(i);
+  }
+  if (!filteredCategories.length) {
+    document.getElementById('diagram-svg').style.display = 'none';
+    document.getElementById('diagram-title').textContent = '';
+    document.getElementById('no-trends-msg').style.display = '';
+    return;
+  }
+  clearInterval(carouselTimer);
+  categoryIdx = 0;
+  drawDiagram(categoryIdx);
+  carouselTimer = setInterval(() => {
+    categoryIdx = (categoryIdx + 1) % filteredCategories.length;
+    drawDiagram(categoryIdx);
+  }, 4500);
+}
+
+document.getElementById('csvinput').addEventListener('change', function(e) {
+  if (!e.target.files.length) return;
+  const file = e.target.files[0];
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    trends = parseCSV(evt.target.result);
+    startCarousel();
+  };
+  reader.readAsText(file, "UTF-8");
+});
+</script>
+</body>
+</html>

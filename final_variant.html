@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Диаграмма: интервалы и облачки</title>
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; width: 100%; }
+    body { background: #fff; width: 100vw; height: 100vh; overflow: hidden; }
+    #csvinput { position: fixed; top: 10px; left: 10px; z-index: 10; }
+    .carousel-category {
+      font-family: Arial, sans-serif;
+      font-size: 2.4em;
+      font-weight: bold;
+      margin-bottom: 2vh;
+      letter-spacing: 2px;
+      text-align: center;
+      min-height: 54px;
+      transition: color 0.35s;
+      user-select: none;
+    }
+    .diagram-wrap {
+      display: flex; justify-content: center; align-items: center;
+      width: 65vw; height: 80vh; margin: 0 auto; background: #fff;
+      border-radius: 30px; box-shadow: 0 4px 32px 3px rgba(60,90,130,0.06);
+      position: relative; overflow: hidden;
+    }
+    svg { width: 100%; height: 100%; display: block; background: #fff; }
+    .trend-label-bg {
+      fill: #fff; opacity: 0.98;
+      stroke: #b9b9c8; stroke-width: 1.1;
+      rx: 7; ry: 7;
+      filter: drop-shadow(0px 1.5px 6px rgba(80,80,90,0.11));
+    }
+    .trend-label-text {
+      font-family: Arial, sans-serif; font-size: 1.23em; font-weight: bold;
+      paint-order: stroke; stroke: #fff; stroke-width: 6px;
+      user-select: none; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <input id="csvinput" type="file" accept=".csv">
+  <div class="carousel-category" id="carousel-category-title"></div>
+  <div class="diagram-wrap">
+    <svg id="chart"></svg>
+  </div>
+  <script>
+    const categoriesList = [
+      "Политические","Экономические","Экологические","Технические","Юридические","Социальные"
+    ];
+    const categoryColors = [
+      "#2051c7","#ff9800","#43a047","#7e57c2","#e53935","#00838f"
+    ];
+    const intervalList = ["1-3", "3-5", "7-10", "10+"];
+    const intervalColors = [
+      "#4055a8", "#6784c9", "#a5b4e2", "#d6e2f9"
+    ];
+    const categories = 6, intervals = 4;
+    const ringWidthRatio = [5.3,2.7,2.7,2.7];
+
+    function getWrapSize() {
+      const wrap = document.querySelector('.diagram-wrap');
+      const bounds = wrap.getBoundingClientRect();
+      return [bounds.width, bounds.height];
+    }
+    function minSide() {
+      const [w, h] = getWrapSize();
+      return Math.min(w, h);
+    }
+    function getRadii() {
+      const base = minSide();
+      const fullWidth = base*0.92;
+      const totalCoef = ringWidthRatio.reduce((a,b)=>a+b,0);
+      const singleWidth = fullWidth/totalCoef;
+      let radii = [0];
+      for(let k of ringWidthRatio)
+        radii.push(radii[radii.length-1] + singleWidth*k/2);
+      return radii;
+    }
+
+    // Новый метод построения кольца (donut arc)
+    function donutArcPath(cx, cy, rOuter, rInner, startAngle, endAngle) {
+      const rad = a => (a - 90) * Math.PI / 180;
+      // Наружная дуга
+      const x1 = cx + rOuter * Math.cos(rad(startAngle));
+      const y1 = cy + rOuter * Math.sin(rad(startAngle));
+      const x2 = cx + rOuter * Math.cos(rad(endAngle));
+      const y2 = cy + rOuter * Math.sin(rad(endAngle));
+      // Внутренняя дуга
+      const x3 = cx + rInner * Math.cos(rad(endAngle));
+      const y3 = cy + rInner * Math.sin(rad(endAngle));
+      const x4 = cx + rInner * Math.cos(rad(startAngle));
+      const y4 = cy + rInner * Math.sin(rad(startAngle));
+      const largeArc = (endAngle - startAngle) > 180 ? 1 : 0;
+      return [
+        "M", x1, y1,
+        "A", rOuter, rOuter, 0, largeArc, 1, x2, y2,
+        "L", x3, y3,
+        "A", rInner, rInner, 0, largeArc, 0, x4, y4,
+        "Z"
+      ].join(" ");
+    }
+
+    // =============== Core: равномерно, облачка только с одной стороны ===============
+    function placeTrendsAndLabels(trends, base, centerX, centerY, radii, catColor) {
+      let left = [], right = [];
+      let byInterval = [[],[],[],[]];
+      for (let intv = 0; intv < intervals; intv++) {
+        byInterval[intv] = trends.filter(t => t.Интервал === intervalList[intv]);
+      }
+      let N = trends.length;
+      let placed = [];
+
+      let labelGap = base * 0.075;
+      let leftCount = 0, rightCount = 0;
+      for (let intv = 0; intv < intervals; intv++) {
+        let arr = byInterval[intv];
+        let n = arr.length;
+        for (let j = 0; j < n; j++) {
+          let theta = 2*Math.PI*(placed.length+0.5)/N - Math.PI/2;
+          let isLeft = Math.cos(theta) < 0;
+          if (isLeft) left.push({trend: arr[j], intv, theta});
+          else right.push({trend: arr[j], intv, theta});
+          placed.push({trend: arr[j], intv, theta});
+        }
+      }
+      let all = [];
+      let radiiArr = radii;
+      left.sort((a,b)=>a.theta-b.theta);
+      right.sort((a,b)=>a.theta-b.theta);
+
+      let outerR = radiiArr[radiiArr.length-1];
+      let leftYstep = (2*outerR-40)/(left.length+1);
+      let rightYstep = (2*outerR-40)/(right.length+1);
+
+      // Левая сторона: подпись слева от круга
+      for(let i=0;i<left.length;i++){
+        let trend = left[i].trend, intv = left[i].intv;
+        let theta = left[i].theta;
+        let rmid = (radiiArr[intv]+radiiArr[intv+1])/2;
+        let dotY = centerY - outerR + leftYstep*(i+1);
+        let dotX = centerX - Math.sqrt(Math.max(0, rmid**2 - (dotY-centerY)**2));
+        let labelX = dotX - base*0.05;
+        let labelY = dotY;
+        all.push({
+          trend, intv,
+          x: dotX, y: dotY,
+          labelX, labelY,
+          labelAnchor: "end"
+        });
+      }
+      // Правая сторона: подпись справа от круга
+      for(let i=0;i<right.length;i++){
+        let trend = right[i].trend, intv = right[i].intv;
+        let theta = right[i].theta;
+        let rmid = (radiiArr[intv]+radiiArr[intv+1])/2;
+        let dotY = centerY - outerR + rightYstep*(i+1);
+        let dotX = centerX + Math.sqrt(Math.max(0, rmid**2 - (dotY-centerY)**2));
+        let labelX = dotX + base*0.05;
+        let labelY = dotY;
+        all.push({
+          trend, intv,
+          x: dotX, y: dotY,
+          labelX, labelY,
+          labelAnchor: "start"
+        });
+      }
+      return all;
+    }
+
+    // =================== SVG Render ===================
+    const svg = document.getElementById('chart');
+    let allTrends = [];
+    let currentCategoryIdx = 0;
+    function drawChartForCategory(catIdx, trends) {
+      const wrap = document.querySelector('.diagram-wrap');
+      const [svgW, svgH] = getWrapSize();
+      svg.setAttribute('width', svgW);
+      svg.setAttribute('height', svgH);
+      while(svg.lastChild) svg.removeChild(svg.lastChild);
+
+      const base = minSide();
+      const centerX = svgW/2, centerY = svgH/2;
+      const radii = getRadii();
+      const outerR = radii[radii.length-1];
+
+      // --- Интервальные кольца с цветами ---
+      for (let i = intervals-1; i >= 0; i--) {
+        const r1 = radii[i], r2 = radii[i+1];
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", donutArcPath(centerX, centerY, r2, r1, 0, 360));
+        path.setAttribute("fill", intervalColors[i]);
+        path.setAttribute("stroke", "none");
+        svg.appendChild(path);
+      }
+      // --- Кольцевые линии
+      for (let i = 1; i < radii.length; i++) {
+        const r = radii[i];
+        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circle.setAttribute("cx", centerX);
+        circle.setAttribute("cy", centerY);
+        circle.setAttribute("r", r);
+        circle.setAttribute("fill", "none");
+        circle.setAttribute("stroke", "#000");
+        circle.setAttribute("stroke-width", 1.5);
+        svg.appendChild(circle);
+      }
+      // --- Тренды выбранной категории ---
+      const catTrends = trends.filter(t => t.Категория === categoriesList[catIdx]);
+      const placed = placeTrendsAndLabels(catTrends, base, centerX, centerY, radii, categoryColors[catIdx]);
+      for(let dot of placed) {
+        // точка
+        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circle.setAttribute("class", "trend-dot");
+        circle.setAttribute("cx", dot.x);
+        circle.setAttribute("cy", dot.y);
+        circle.setAttribute("r", base*0.008);
+        circle.setAttribute("fill", categoryColors[catIdx]);
+        circle.setAttribute("stroke", "#fff");
+        circle.setAttribute("stroke-width", base*0.004);
+        svg.appendChild(circle);
+
+        // Облачко-подпись рядом
+        let text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", dot.labelX);
+        text.setAttribute("y", dot.labelY);
+        text.setAttribute("class", "trend-label-text");
+        text.setAttribute("fill", categoryColors[catIdx]);
+        text.setAttribute("text-anchor", dot.labelAnchor);
+        text.setAttribute("alignment-baseline", "middle");
+        text.textContent = dot.trend.Название;
+
+        svg.appendChild(text);
+        let bbox = text.getBBox();
+        let rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        rect.setAttribute("class", "trend-label-bg");
+        rect.setAttribute("x", bbox.x - 8);
+        rect.setAttribute("y", bbox.y - 4);
+        rect.setAttribute("width", bbox.width + 16);
+        rect.setAttribute("height", bbox.height + 8);
+        svg.insertBefore(rect, text); // позади текста
+      }
+    }
+
+    function parseCSV(text) {
+      const lines = text.trim().split(/\r?\n/);
+      const headers = lines[0].split(",");
+      return lines.slice(1).map(line => {
+        const values = [];
+        let current = '';
+        let inQuotes = false;
+        for (let i=0; i<line.length; i++) {
+          const char = line[i];
+          if (char === '"' && line[i+1] === '"') {
+            current += '"';
+            i++;
+          } else if (char === '"') {
+            inQuotes = !inQuotes;
+          } else if (char === ',' && !inQuotes) {
+            values.push(current);
+            current = '';
+          } else {
+            current += char;
+          }
+        }
+        values.push(current);
+        const obj = {};
+        headers.forEach((h, i) => obj[h.trim()] = (values[i]||'').trim());
+        return obj;
+      });
+    }
+    function showCategory(idx) {
+      currentCategoryIdx = idx;
+      const titleDiv = document.getElementById('carousel-category-title');
+      titleDiv.textContent = categoriesList[idx] + " тренды";
+      titleDiv.style.color = categoryColors[idx];
+      drawChartForCategory(idx, allTrends);
+    }
+    function startCarousel() {
+      let idx = 0;
+      showCategory(idx);
+      if (window.carouselInterval) clearInterval(window.carouselInterval);
+      window.carouselInterval = setInterval(() => {
+        idx = (idx + 1) % categoriesList.length;
+        showCategory(idx);
+      }, 10000);
+    }
+    document.getElementById('csvinput').addEventListener('change', function(e) {
+      if (!e.target.files[0]) return;
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const csv = evt.target.result;
+        allTrends = parseCSV(csv);
+        startCarousel();
+      };
+      reader.readAsText(file, 'utf-8');
+    });
+    window.addEventListener('resize', () => {
+      showCategory(currentCategoryIdx);
+    });
+  </script>
+</body>
+</html>
